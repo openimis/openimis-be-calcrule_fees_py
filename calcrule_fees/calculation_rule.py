@@ -1,6 +1,6 @@
 import json
 
-from calcrule_fees.apps import AbsStrategy
+from core.abs_calculation_rule import AbsStrategy
 from calcrule_fees.config import CLASS_RULE_PARAM_VALIDATION, \
     DESCRIPTION_CONTRIBUTION_VALUATION, FROM_TO
 from calcrule_fees.converters import \
