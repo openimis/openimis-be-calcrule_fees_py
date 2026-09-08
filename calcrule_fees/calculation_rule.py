@@ -14,6 +14,7 @@ from core import datetime
 from django.contrib.contenttypes.models import ContentType
 from contribution.models import Premium
 from contribution_plan.models import PaymentPlan
+from claim_batch.services import get_products_from_work_data
 from product.models import Product
 from claim_batch.models import BatchRun
 from core.models import User
@@ -150,39 +151,50 @@ class FeesCalculationRule(AbsStrategy):
         audit_user_id, product_id, start_date, end_date, batch_run, work_data = \
             cls._get_batch_run_parameters(**kwargs)
 
+        if not work_data:
+            work_data = kwargs.get('work_data', None)
         # if this is trigerred by batch_run - take user data from audit_user_id
         user = User.objects.filter(i_user__id=audit_user_id).first()
         if user is None:
             raise ValidationError(_("Such User does not exist"))
-        
-        product = work_data['product']
 
-        # take all payments related to particular invoice per product
-        payments_to_process = []
-        invoice_payments = InvoicePayment.objects.filter(
-            invoice__line_items__line_id__isnull=False, is_deleted=False,
-            date_created__gte=start_date, date_created__lte=end_date
-        )
-        # select payments to be processed
-        for ip in invoice_payments:
-            invoice = ip.invoice
-            contributions = None
-            for line_item in invoice.line_items.all():
-                if line_item.line_type.name == 'policy':
-                    if line_item.line.product.id == product.id:
-                        payments_to_process.append(ip)
-                if line_item.line_type.name == 'contract contribution plan details':
-                    if line_item.line.contribution_plan.benefit_plan.id == product.id:
-                        payments_to_process.append(ip)
-        for payment in payments_to_process:
-            cls.run_convert(
-                instance=batch_run,
-                convert_to='Bill',
-                payment=payment,
-                user=user,
-                payment_plan=instance,
-                context=context
+        if work_data:
+            # Adapt work data to use only products (list of products instead of location_id / single product).
+            # Trigger now scopes per payment plan.
+            products = get_products_from_work_data(work_data)
+            # Prefer this payment plan instance's benefit_plan
+            plan_product = getattr(instance, 'benefit_plan', None)
+            if plan_product:
+                products = [plan_product]
+            product_ids = {p.id for p in products} if products else set()
+
+            # take all payments related to particular invoice per product
+            payments_to_process = []
+            invoice_payments = InvoicePayment.objects.filter(
+                invoice__line_items__line_id__isnull=False, is_deleted=False,
+                date_created__gte=start_date, date_created__lte=end_date
             )
+            # select payments to be processed
+            for ip in invoice_payments:
+                invoice = ip.invoice
+                for line_item in invoice.line_items.all():
+                    if line_item.line_type.name == 'policy':
+                        if line_item.line.product.id in product_ids:
+                            payments_to_process.append(ip)
+                            break  # avoid duplicates for this ip
+                    if line_item.line_type.name == 'contract contribution plan details':
+                        if line_item.line.contribution_plan.benefit_plan.id in product_ids:
+                            payments_to_process.append(ip)
+                            break  # avoid duplicates for this ip
+            for payment in payments_to_process:
+                cls.run_convert(
+                    instance=batch_run,
+                    convert_to='Bill',
+                    payment=payment,
+                    user=user,
+                    payment_plan=instance,
+                    context=context
+                )
 
         return "conversion finished 'fees'"
 
