@@ -4,6 +4,7 @@ from unittest import mock
 from django.test import TestCase
 
 from calcrule_fees.calculation_rule import FeesCalculationRule
+from calcrule_fees.converters import InvoicePaymentToBillItemConverter
 from contribution.models import Premium
 from contribution_plan.models import PaymentPlan
 from core.test_helpers import create_test_interactive_user
@@ -24,6 +25,13 @@ class FeesCalculationRuleTest(TestCase):
             with self.subTest(json_ext=json_ext):
                 fee = self.rule._calculate_fee(premium, payment_plan=PaymentPlan(json_ext=json_ext))
                 self.assertEqual(fee, 0)
+
+    def test_bill_line_discount_without_calculation_rule_params(self):
+        for json_ext in (None, {"other": 1}):
+            with self.subTest(json_ext=json_ext):
+                line = {}
+                InvoicePaymentToBillItemConverter.build_discount(line, PaymentPlan(json_ext=json_ext))
+                self.assertEqual(line["discount"], 0)
 
     def test_fee_from_rate(self):
         payment_plan = PaymentPlan(json_ext='{"calculation_rule": {"fee_rate": 5}}')
