@@ -138,7 +138,7 @@ class FeesCalculationRule(AbsStrategy):
             if pp_params:
                 pp_params = pp_params["calculation_rule"] if "calculation_rule" in pp_params else None
             fee_rate = 0
-            if "fee_rate" in pp_params:
+            if pp_params and "fee_rate" in pp_params:
                 fee_rate = float(pp_params["fee_rate"])
             return float(instance.amount) * (fee_rate / 100)
         else:
@@ -157,23 +157,7 @@ class FeesCalculationRule(AbsStrategy):
         
         product = work_data['product']
 
-        # take all payments related to particular invoice per product
-        payments_to_process = []
-        invoice_payments = InvoicePayment.objects.filter(
-            invoice__line_items__line_id__isnull=False, is_deleted=False,
-            date_created__gte=start_date, date_created__lte=end_date
-        )
-        # select payments to be processed
-        for ip in invoice_payments:
-            invoice = ip.invoice
-            contributions = None
-            for line_item in invoice.line_items.all():
-                if line_item.line_type.name == 'policy':
-                    if line_item.line.product.id == product.id:
-                        payments_to_process.append(ip)
-                if line_item.line_type.name == 'contract contribution plan details':
-                    if line_item.line.contribution_plan.benefit_plan.id == product.id:
-                        payments_to_process.append(ip)
+        payments_to_process = cls._payments_to_process(product, start_date, end_date)
         for payment in payments_to_process:
             cls.run_convert(
                 instance=batch_run,
@@ -185,6 +169,34 @@ class FeesCalculationRule(AbsStrategy):
             )
 
         return "conversion finished 'fees'"
+
+    @classmethod
+    def _payments_to_process(cls, product, start_date, end_date):
+        """
+        The invoice payments of the period whose invoice bills `product` (a policy of
+        that product or a contract contribution plan detail whose plan covers it).
+        Each payment is returned once, however many of its invoice lines match: the
+        line items join returns a payment once per line, and billing a payment per
+        line would charge the fee several times.
+        """
+        invoice_payments = InvoicePayment.objects.filter(
+            invoice__line_items__line_id__isnull=False, is_deleted=False,
+            date_created__gte=start_date, date_created__lte=end_date
+        ).distinct()
+        payments_to_process = []
+        for ip in invoice_payments:
+            if any(cls._line_bills_product(line_item, product) for line_item in ip.invoice.line_items.all()):
+                payments_to_process.append(ip)
+        return payments_to_process
+
+    @staticmethod
+    def _line_bills_product(line_item, product):
+        line_type_name = line_item.line_type.name
+        if line_type_name == 'policy':
+            return line_item.line.product.id == product.id
+        if line_type_name == 'contract contribution plan details':
+            return line_item.line.contribution_plan.benefit_plan.id == product.id
+        return False
 
     @classmethod
     def _convert_fees(cls, instance, invoice_payment, payment_plan):

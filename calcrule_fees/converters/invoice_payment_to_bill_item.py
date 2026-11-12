@@ -62,7 +62,7 @@ class InvoicePaymentToBillItemConverter(object):
         if pp_params:
             pp_params = pp_params["calculation_rule"] if "calculation_rule" in pp_params else None
         fee_rate = 0
-        if "fee_rate" in pp_params:
+        if pp_params and "fee_rate" in pp_params:
             fee_rate = float(pp_params["fee_rate"])
         bill_line_item["discount"] = 1-(fee_rate/100) if fee_rate != 0 else 0
 
